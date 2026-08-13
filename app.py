@@ -114,10 +114,16 @@ def _delete_history(analysis_id):
         return cur.rowcount > 0
 
 
-def _cookie_opts():
+def _ydl_base_opts():
+    # remote_components: yt-dlp resuelve el "n challenge"/firma de YouTube
+    # con un runtime JS (deno, instalado en la imagen) pero el propio script
+    # que interpreta el challenge no viene empaquetado -- sin esto, la
+    # mayoría de vídeos solo exponen formatos de storyboard y falla con
+    # "Requested format is not available".
+    opts = {"remote_components": ["ejs:github"]}
     if os.path.isfile(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
-        return {"cookiefile": COOKIES_FILE}
-    return {}
+        opts["cookiefile"] = COOKIES_FILE
+    return opts
 
 
 def _new_job():
@@ -141,7 +147,7 @@ def _download_audio(url, tmpdir):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        **_cookie_opts(),
+        **_ydl_base_opts(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -187,7 +193,7 @@ def _search_youtube(query):
         "skip_download": True,
         "noplaylist": True,
         "extract_flat": True,
-        **_cookie_opts(),
+        **_ydl_base_opts(),
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
