@@ -12,6 +12,23 @@ Sin base de datos ni secretos — todo vive en memoria mientras dura el análisi
 (`JOBS` en `app.py`), por eso conviene `restart: unless-stopped` pero no hace
 falta persistir nada entre reinicios.
 
+## Cookies (bloqueo anti-bot de YouTube)
+
+Si `yt-dlp` falla con `Sign in to confirm you're not a bot` (frecuente desde
+IPs de servidor), rellena `cookies.txt` en este directorio con cookies de una
+sesión de YouTube logueada, en formato Netscape:
+
+1. Instala una extensión tipo [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+   en un navegador con sesión iniciada en YouTube.
+2. Exporta las cookies de `youtube.com` a un archivo.
+3. Copia ese archivo como `services/tracklist/cookies.txt` (se monta como
+   solo lectura en el contenedor — no hace falta rebuild, solo
+   `docker compose restart tracklist`).
+
+`cookies.txt` está en `.gitignore` — nunca se sube al repo. Vacío por
+defecto (yt-dlp funciona igual, sin cookies, hasta que YouTube empiece a
+pedir verificación).
+
 ## Notas
 
 - Los tramos sin match ("no match" en la respuesta de Shazam) son normales:

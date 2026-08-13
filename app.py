@@ -14,8 +14,15 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 
 STEP_SECONDS = int(os.environ.get("TRACKLIST_STEP_SECONDS", "45"))
 SNIPPET_SECONDS = int(os.environ.get("TRACKLIST_SNIPPET_SECONDS", "12"))
+COOKIES_FILE = os.environ.get("TRACKLIST_COOKIES_FILE", "/app/cookies.txt")
 
 JOBS = {}
+
+
+def _cookie_opts():
+    if os.path.isfile(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
+        return {"cookiefile": COOKIES_FILE}
+    return {}
 
 
 def _new_job():
@@ -39,6 +46,7 @@ def _download_audio(url, tmpdir):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        **_cookie_opts(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -80,6 +88,7 @@ def _search_youtube(query):
         "skip_download": True,
         "noplaylist": True,
         "default_search": "ytsearch1",
+        **_cookie_opts(),
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
