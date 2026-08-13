@@ -126,6 +126,54 @@
     font-size: .88rem;
     display: none;
   }
+  h2 {
+    font-size: 1rem;
+    margin: 2.5rem 0 .75rem;
+    color: var(--text);
+    border-top: 1px solid var(--border);
+    padding-top: 2rem;
+  }
+  #history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+  }
+  #history-list li {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .55rem .7rem;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  #history-list .h-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    font-size: .9rem;
+  }
+  #history-list .h-title:hover { color: var(--accent); }
+  #history-list .h-meta {
+    color: var(--muted);
+    font-size: .78rem;
+    flex-shrink: 0;
+  }
+  #history-list button.h-delete {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--err);
+    padding: .3rem .55rem;
+    font-size: .78rem;
+    font-weight: 500;
+  }
+  #history-empty { color: var(--muted); font-size: .88rem; }
 </style>
 </head>
 <body>
@@ -159,6 +207,10 @@
       <tbody id="tracks-body"></tbody>
     </table>
   </div>
+
+  <h2>Historial</h2>
+  <div id="history-empty">Todavía no hay análisis guardados.</div>
+  <ul id="history-list"></ul>
 </main>
 
 <script>
@@ -173,6 +225,8 @@ const sourceTitle = document.getElementById("source-title");
 const table = document.getElementById("tracks-table");
 const tbody = document.getElementById("tracks-body");
 const errorBox = document.getElementById("error-box");
+const historyList = document.getElementById("history-list");
+const historyEmpty = document.getElementById("history-empty");
 
 let pollTimer = null;
 
@@ -192,7 +246,7 @@ const STATUS_LABELS = {
   error: "Error",
 };
 
-function renderTracks(tracks, sourceUrl) {
+function renderTracks(tracks, sourceUrl, finished) {
   tbody.innerHTML = "";
   table.style.display = tracks.length ? "table" : "none";
   for (const tr of tracks) {
@@ -229,7 +283,9 @@ function renderTracks(tracks, sourceUrl) {
       a.appendChild(span);
       ytCell.appendChild(a);
     } else {
-      ytCell.innerHTML = '<span class="muted">buscando…</span>';
+      ytCell.innerHTML = finished
+        ? '<span class="muted">no encontrado</span>'
+        : '<span class="muted">buscando…</span>';
     }
 
     row.appendChild(tsCell);
@@ -264,13 +320,15 @@ async function poll(jobId, sourceUrl) {
     statusTime.textContent = "";
   }
 
-  renderTracks(job.tracks || [], sourceUrl);
+  const finished = job.status === "done" || job.status === "error";
+  renderTracks(job.tracks || [], sourceUrl, finished);
 
   if (job.status === "done") {
     barFill.classList.add("done");
     barFill.style.width = "100%";
     clearInterval(pollTimer);
     submitBtn.disabled = false;
+    loadHistory();
   } else if (job.status === "error") {
     barFill.classList.add("error");
     errorBox.style.display = "block";
@@ -278,6 +336,75 @@ async function poll(jobId, sourceUrl) {
     clearInterval(pollTimer);
     submitBtn.disabled = false;
   }
+}
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+  return d.toLocaleString();
+}
+
+async function loadHistory() {
+  let res;
+  try {
+    res = await fetch("/api/history");
+  } catch (e) {
+    return;
+  }
+  if (!res.ok) return;
+  const items = await res.json();
+
+  historyList.innerHTML = "";
+  historyEmpty.style.display = items.length ? "none" : "block";
+
+  for (const item of items) {
+    const li = document.createElement("li");
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "h-title";
+    titleSpan.textContent = item.title || item.url;
+    titleSpan.title = "Ver tracklist";
+    titleSpan.addEventListener("click", () => viewHistory(item.id));
+
+    const meta = document.createElement("span");
+    meta.className = "h-meta";
+    meta.textContent = `${item.track_count} temas · ${fmtDate(item.created_at)}`;
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "h-delete";
+    delBtn.textContent = "Borrar";
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("¿Borrar este análisis del historial?")) return;
+      await fetch(`/api/history/${item.id}`, { method: "DELETE" });
+      loadHistory();
+    });
+
+    li.appendChild(titleSpan);
+    li.appendChild(meta);
+    li.appendChild(delBtn);
+    historyList.appendChild(li);
+  }
+}
+
+async function viewHistory(id) {
+  const res = await fetch(`/api/history/${id}`);
+  if (!res.ok) return;
+  const job = await res.json();
+
+  if (pollTimer) clearInterval(pollTimer);
+  submitBtn.disabled = false;
+  errorBox.style.display = "none";
+  statusBox.classList.add("show");
+  barFill.classList.remove("error");
+  barFill.classList.add("done");
+  barFill.style.width = "100%";
+  statusText.textContent = "Guardado";
+  const total = job.source?.duration || 0;
+  statusTime.textContent = total ? `${fmtTime(total)}` : "";
+  sourceTitle.textContent = job.source?.title || "";
+  renderTracks(job.tracks || [], job.source?.url || "", true);
+  window.scrollTo({ top: statusBox.offsetTop - 20, behavior: "smooth" });
 }
 
 form.addEventListener("submit", async (e) => {
@@ -323,6 +450,8 @@ form.addEventListener("submit", async (e) => {
   poll(data.job_id, url);
   pollTimer = setInterval(() => poll(data.job_id, url), 2500);
 });
+
+loadHistory();
 </script>
 </body>
 </html>

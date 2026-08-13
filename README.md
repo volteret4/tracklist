@@ -5,12 +5,18 @@ Identifica el tracklist de un mix/set de DJ a partir de un enlace de YouTube:
 1. Descarga el audio temporalmente con `yt-dlp` (se borra al terminar el análisis).
 2. Recorre el audio a tramos (cada `TRACKLIST_STEP_SECONDS`, 45s por defecto) y
    reconoce cada tramo con `shazamio`.
-3. Por cada tema identificado, vuelve a buscar con `yt-dlp` (`ytsearch1:`) el
-   vídeo suelto de esa canción en YouTube.
+3. Por cada tema identificado, vuelve a buscar con `yt-dlp` (`ytsearch1:`,
+   con `extract_flat` para no disparar el bloqueo anti-bot) el vídeo suelto
+   de esa canción en YouTube.
+4. Al terminar, guarda el tracklist completo en `tracklist.db` (SQLite) para
+   consultarlo después desde el "Historial" de la propia web, sin tener que
+   reanalizar el mismo mix. Se borra solo desde ahí (botón "Borrar"), nunca
+   automáticamente.
 
-Sin base de datos ni secretos — todo vive en memoria mientras dura el análisis
-(`JOBS` en `app.py`), por eso conviene `restart: unless-stopped` pero no hace
-falta persistir nada entre reinicios.
+Mientras un análisis está en curso, su progreso vive en memoria (`JOBS` en
+`app.py`) — si el contenedor se reinicia a mitad de un análisis se pierde ese
+análisis en curso, pero el historial ya guardado en `tracklist.db` no se ve
+afectado.
 
 ## Cookies (bloqueo anti-bot de YouTube)
 
