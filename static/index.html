@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracklist ID</title>
+<style>
+  :root {
+    --bg: #12151b;
+    --panel: #1a1f29;
+    --border: #2a3140;
+    --text: #e6e9ef;
+    --muted: #8b93a3;
+    --accent: #5b8def;
+    --ok: #3ec28f;
+    --err: #e15c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 4rem;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  p.sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .9rem; }
+  form {
+    display: flex;
+    gap: .5rem;
+  }
+  input[type=url] {
+    flex: 1;
+    padding: .7rem .85rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: .95rem;
+  }
+  input[type=url]:focus { outline: 2px solid var(--accent); }
+  button {
+    padding: .7rem 1.1rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: .95rem;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #status {
+    margin-top: 1.5rem;
+    display: none;
+  }
+  #status.show { display: block; }
+  .status-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: .85rem;
+    color: var(--muted);
+    margin-bottom: .4rem;
+  }
+  .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width .4s ease;
+  }
+  .bar-fill.done { background: var(--ok); }
+  .bar-fill.error { background: var(--err); }
+  #source-title {
+    margin-top: .6rem;
+    font-size: .95rem;
+    color: var(--text);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.5rem;
+    font-size: .9rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .55rem .5rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+  td.ts a { color: var(--muted); text-decoration: none; font-variant-numeric: tabular-nums; }
+  td.ts a:hover { color: var(--accent); }
+  td.track { color: var(--text); }
+  td.track .artist { color: var(--muted); }
+  td.yt img {
+    width: 64px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-right: .5rem;
+  }
+  td.yt a {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: .85rem;
+  }
+  td.yt a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); }
+  #error-box {
+    margin-top: 1rem;
+    padding: .75rem 1rem;
+    border-radius: 8px;
+    background: rgba(225, 92, 92, .12);
+    border: 1px solid var(--err);
+    color: var(--err);
+    font-size: .88rem;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tracklist ID</h1>
+  <p class="sub">Pega un enlace de YouTube (mix, set de DJ...) y lo analiza por tramos con Shazam, buscando además cada tema encontrado como vídeo suelto.</p>
+
+  <form id="form">
+    <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
+    <button type="submit" id="submit-btn">Analizar</button>
+  </form>
+
+  <div id="error-box"></div>
+
+  <div id="status">
+    <div class="status-line">
+      <span id="status-text">—</span>
+      <span id="status-time"></span>
+    </div>
+    <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+    <div id="source-title"></div>
+
+    <table id="tracks-table" style="display:none">
+      <thead>
+        <tr>
+          <th>Tiempo</th>
+          <th>Tema</th>
+          <th>Vídeo encontrado</th>
+        </tr>
+      </thead>
+      <tbody id="tracks-body"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const form = document.getElementById("form");
+const urlInput = document.getElementById("url");
+const submitBtn = document.getElementById("submit-btn");
+const statusBox = document.getElementById("status");
+const statusText = document.getElementById("status-text");
+const statusTime = document.getElementById("status-time");
+const barFill = document.getElementById("bar-fill");
+const sourceTitle = document.getElementById("source-title");
+const table = document.getElementById("tracks-table");
+const tbody = document.getElementById("tracks-body");
+const errorBox = document.getElementById("error-box");
+
+let pollTimer = null;
+
+function fmtTime(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+const STATUS_LABELS = {
+  queued: "En cola…",
+  downloading: "Descargando audio…",
+  analyzing: "Analizando con Shazam…",
+  searching: "Buscando vídeos de cada tema…",
+  done: "Completado",
+  error: "Error",
+};
+
+function renderTracks(tracks, sourceUrl) {
+  tbody.innerHTML = "";
+  table.style.display = tracks.length ? "table" : "none";
+  for (const tr of tracks) {
+    const row = document.createElement("tr");
+
+    const tsCell = document.createElement("td");
+    tsCell.className = "ts";
+    const tsLink = document.createElement("a");
+    const sep = sourceUrl.includes("?") ? "&" : "?";
+    tsLink.href = `${sourceUrl}${sep}t=${Math.floor(tr.timestamp)}s`;
+    tsLink.target = "_blank";
+    tsLink.rel = "noopener";
+    tsLink.textContent = fmtTime(tr.timestamp);
+    tsCell.appendChild(tsLink);
+
+    const trackCell = document.createElement("td");
+    trackCell.className = "track";
+    trackCell.innerHTML = `<span class="artist">${tr.artist || "?"}</span> — ${tr.title || "?"}`;
+
+    const ytCell = document.createElement("td");
+    ytCell.className = "yt";
+    if (tr.youtube && tr.youtube.url) {
+      const a = document.createElement("a");
+      a.href = tr.youtube.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      if (tr.youtube.thumbnail) {
+        const img = document.createElement("img");
+        img.src = tr.youtube.thumbnail;
+        a.appendChild(img);
+      }
+      const span = document.createElement("span");
+      span.textContent = tr.youtube.title || "Ver en YouTube";
+      a.appendChild(span);
+      ytCell.appendChild(a);
+    } else {
+      ytCell.innerHTML = '<span class="muted">buscando…</span>';
+    }
+
+    row.appendChild(tsCell);
+    row.appendChild(trackCell);
+    row.appendChild(ytCell);
+    tbody.appendChild(row);
+  }
+}
+
+async function poll(jobId, sourceUrl) {
+  let res;
+  try {
+    res = await fetch(`/api/jobs/${jobId}`);
+  } catch (e) {
+    return;
+  }
+  if (!res.ok) return;
+  const job = await res.json();
+
+  statusText.textContent = STATUS_LABELS[job.status] || job.status;
+
+  if (job.source) {
+    sourceTitle.textContent = job.source.title || "";
+  }
+
+  const total = job.progress?.total || 0;
+  const current = job.progress?.current || 0;
+  if (total > 0) {
+    statusTime.textContent = `${fmtTime(current)} / ${fmtTime(total)}`;
+    barFill.style.width = `${Math.min(100, (current / total) * 100)}%`;
+  } else {
+    statusTime.textContent = "";
+  }
+
+  renderTracks(job.tracks || [], sourceUrl);
+
+  if (job.status === "done") {
+    barFill.classList.add("done");
+    barFill.style.width = "100%";
+    clearInterval(pollTimer);
+    submitBtn.disabled = false;
+  } else if (job.status === "error") {
+    barFill.classList.add("error");
+    errorBox.style.display = "block";
+    errorBox.textContent = job.error || "Error desconocido";
+    clearInterval(pollTimer);
+    submitBtn.disabled = false;
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = urlInput.value.trim();
+  if (!url) return;
+
+  submitBtn.disabled = true;
+  errorBox.style.display = "none";
+  barFill.classList.remove("done", "error");
+  barFill.style.width = "0%";
+  statusBox.classList.add("show");
+  statusText.textContent = "Enviando…";
+  statusTime.textContent = "";
+  sourceTitle.textContent = "";
+  table.style.display = "none";
+  tbody.innerHTML = "";
+
+  let res;
+  try {
+    res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  } catch (err) {
+    errorBox.style.display = "block";
+    errorBox.textContent = "No se pudo contactar con el servidor.";
+    submitBtn.disabled = false;
+    return;
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    errorBox.style.display = "block";
+    errorBox.textContent = data.error || "Error al crear el análisis.";
+    submitBtn.disabled = false;
+    return;
+  }
+
+  const data = await res.json();
+  if (pollTimer) clearInterval(pollTimer);
+  poll(data.job_id, url);
+  pollTimer = setInterval(() => poll(data.job_id, url), 2500);
+});
+</script>
+</body>
+</html>
