@@ -267,6 +267,82 @@
   #cookies-msg { font-size: .82rem; margin-top: .5rem; display: none; }
   #cookies-msg.ok { color: var(--ok); display: block; }
   #cookies-msg.err { color: var(--err); display: block; }
+  details.adv {
+    margin-top: .75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .6rem .8rem;
+    background: var(--panel);
+  }
+  details.adv summary {
+    cursor: pointer;
+    font-size: .85rem;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .adv-row {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+    margin-top: .7rem;
+    font-size: .85rem;
+    color: var(--muted);
+  }
+  .adv-row label {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+  }
+  .adv-row input[type=number] {
+    width: 4.5rem;
+    padding: .3rem .4rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .adv-row input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  .adv-row .range-label {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    min-width: 3.6rem;
+    text-align: right;
+  }
+  #rescan-panel {
+    margin-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+    display: none;
+  }
+  #rescan-panel.show { display: block; }
+  #rescan-panel h3 {
+    font-size: .85rem;
+    margin: 0 0 .5rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  #gap-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin-bottom: .6rem;
+  }
+  #gap-chips button {
+    padding: .3rem .6rem;
+    font-size: .78rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  #gap-chips button:hover { color: var(--accent); border-color: var(--accent); }
+  #rescan-btn { margin-top: .7rem; }
+  #rescan-msg { font-size: .82rem; margin-top: .5rem; display: none; }
+  #rescan-msg.ok { color: var(--ok); display: block; }
+  #rescan-msg.err { color: var(--err); display: block; }
 </style>
 </head>
 <body>
@@ -278,6 +354,23 @@
     <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
     <button type="submit" id="submit-btn">Analizar</button>
   </form>
+
+  <details class="adv">
+    <summary>Opciones avanzadas</summary>
+    <div class="adv-row">
+      <label>Intervalo entre comprobaciones <input type="number" id="opt-step" value="45" min="5" max="300"> s</label>
+      <label>Duración de cada fragmento enviado <input type="number" id="opt-snippet" value="12" min="4" max="60"> s</label>
+    </div>
+    <div class="adv-row">
+      <label><input type="checkbox" id="opt-range-enable"> Analizar solo un tramo</label>
+      <button type="button" id="opt-fetch-duration">Detectar duración del vídeo</button>
+      <span id="opt-duration-label" class="muted"></span>
+    </div>
+    <div class="adv-row" id="opt-range-row" style="display:none">
+      <label>Desde <input type="range" id="opt-start" min="0" max="3600" value="0"><span class="range-label" id="opt-start-label">0:00</span></label>
+      <label>Hasta <input type="range" id="opt-end" min="0" max="3600" value="3600"><span class="range-label" id="opt-end-label">1:00:00</span></label>
+    </div>
+  </details>
 
   <div id="error-box"></div>
 
@@ -301,6 +394,22 @@
       </thead>
       <tbody id="tracks-body"></tbody>
     </table>
+
+    <div id="rescan-panel">
+      <h3>Reanalizar un tramo</h3>
+      <p class="sub" style="margin-bottom:.5rem">Útil para huecos largos sin tema identificado o transiciones mal reconocidas: reanaliza solo ese tramo, con un intervalo más fino si hace falta. Los temas ya aprobados (✓) no se tocan.</p>
+      <div id="gap-chips"></div>
+      <div class="adv-row">
+        <label>Desde <input type="range" id="rescan-start" min="0" max="0" value="0"><span class="range-label" id="rescan-start-label">0:00</span></label>
+        <label>Hasta <input type="range" id="rescan-end" min="0" max="0" value="0"><span class="range-label" id="rescan-end-label">0:00</span></label>
+      </div>
+      <div class="adv-row">
+        <label>Intervalo <input type="number" id="rescan-step" value="20" min="5" max="300"> s</label>
+        <label>Fragmento <input type="number" id="rescan-snippet" value="8" min="4" max="60"> s</label>
+      </div>
+      <button type="button" id="rescan-btn">Reanalizar tramo</button>
+      <div id="rescan-msg"></div>
+    </div>
   </div>
 
   <h2>Historial</h2>
@@ -338,8 +447,32 @@ const cookiesFileInput = document.getElementById("cookies-file");
 const cookiesUploadBtn = document.getElementById("cookies-upload-btn");
 const cookiesMsg = document.getElementById("cookies-msg");
 
+const optStep = document.getElementById("opt-step");
+const optSnippet = document.getElementById("opt-snippet");
+const optRangeEnable = document.getElementById("opt-range-enable");
+const optRangeRow = document.getElementById("opt-range-row");
+const optFetchDuration = document.getElementById("opt-fetch-duration");
+const optDurationLabel = document.getElementById("opt-duration-label");
+const optStart = document.getElementById("opt-start");
+const optEnd = document.getElementById("opt-end");
+const optStartLabel = document.getElementById("opt-start-label");
+const optEndLabel = document.getElementById("opt-end-label");
+
+const rescanPanel = document.getElementById("rescan-panel");
+const gapChips = document.getElementById("gap-chips");
+const rescanStart = document.getElementById("rescan-start");
+const rescanEnd = document.getElementById("rescan-end");
+const rescanStartLabel = document.getElementById("rescan-start-label");
+const rescanEndLabel = document.getElementById("rescan-end-label");
+const rescanStep = document.getElementById("rescan-step");
+const rescanSnippet = document.getElementById("rescan-snippet");
+const rescanBtn = document.getElementById("rescan-btn");
+const rescanMsg = document.getElementById("rescan-msg");
+
 let pollTimer = null;
 let mainPlayerLoadedFor = null;
+let currentAnalysisId = null;
+let currentDuration = 0;
 
 function fmtTime(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
@@ -347,6 +480,62 @@ function fmtTime(sec) {
   const s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+function fmtTimeLong(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function wireRangePair(startInput, endInput, startLabel, endLabel) {
+  function update(moved) {
+    if (+startInput.value > +endInput.value) {
+      if (moved === "start") endInput.value = startInput.value;
+      else startInput.value = endInput.value;
+    }
+    startLabel.textContent = fmtTimeLong(+startInput.value);
+    endLabel.textContent = fmtTimeLong(+endInput.value);
+  }
+  startInput.addEventListener("input", () => update("start"));
+  endInput.addEventListener("input", () => update("end"));
+  return update;
+}
+
+const updateOptRangeLabels = wireRangePair(optStart, optEnd, optStartLabel, optEndLabel);
+const updateRescanRangeLabels = wireRangePair(rescanStart, rescanEnd, rescanStartLabel, rescanEndLabel);
+
+optRangeEnable.addEventListener("change", () => {
+  optRangeRow.style.display = optRangeEnable.checked ? "flex" : "none";
+});
+
+optFetchDuration.addEventListener("click", async () => {
+  const url = urlInput.value.trim();
+  if (!url) {
+    optDurationLabel.textContent = "pega antes un enlace";
+    return;
+  }
+  optDurationLabel.textContent = "consultando…";
+  try {
+    const res = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+    const data = await res.json();
+    if (!res.ok || !data.duration) {
+      optDurationLabel.textContent = data.error || "no se pudo obtener la duración";
+      return;
+    }
+    const dur = Math.floor(data.duration);
+    optStart.max = dur;
+    optEnd.max = dur;
+    optEnd.value = dur;
+    optDurationLabel.textContent = `duración: ${fmtTimeLong(dur)}`;
+    updateOptRangeLabels();
+  } catch (e) {
+    optDurationLabel.textContent = "no se pudo contactar con el servidor";
+  }
+});
 
 function fmtDate(iso) {
   if (!iso) return "";
@@ -505,16 +694,132 @@ function renderTracks(tracks, sourceUrl, finished, analysisId) {
   }
 }
 
+function computeGaps(tracks, duration, minGapSeconds) {
+  minGapSeconds = minGapSeconds || 60;
+  const gaps = [];
+  let prevEnd = 0;
+  for (const tr of tracks) {
+    const t = tr.timestamp || 0;
+    if (t - prevEnd >= minGapSeconds) gaps.push([prevEnd, t]);
+    prevEnd = Math.max(prevEnd, t);
+  }
+  if (duration - prevEnd >= minGapSeconds) gaps.push([prevEnd, duration]);
+  return gaps;
+}
+
+function renderGapChips(gaps) {
+  gapChips.innerHTML = "";
+  if (!gaps.length) {
+    gapChips.innerHTML = '<span class="muted">No hay huecos largos sin identificar.</span>';
+    return;
+  }
+  for (const [a, b] of gaps) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `${fmtTimeLong(a)}–${fmtTimeLong(b)} (${fmtTimeLong(b - a)})`;
+    btn.addEventListener("click", () => {
+      rescanStart.value = a;
+      rescanEnd.value = b;
+      updateRescanRangeLabels();
+    });
+    gapChips.appendChild(btn);
+  }
+}
+
+function setupRescanPanel(analysisId, duration, tracks) {
+  currentAnalysisId = analysisId;
+  currentDuration = duration || 0;
+  rescanStart.max = currentDuration;
+  rescanEnd.max = currentDuration;
+  rescanStart.value = 0;
+  rescanEnd.value = currentDuration;
+  updateRescanRangeLabels();
+  renderGapChips(computeGaps(tracks || [], currentDuration));
+  rescanMsg.className = "";
+  rescanMsg.textContent = "";
+  rescanBtn.disabled = false;
+  rescanPanel.classList.add("show");
+}
+
 async function finalizeDoneJob(jobId, sourceUrl) {
   try {
     const res = await fetch(`/api/history/${jobId}`);
     if (res.ok) {
       const job = await res.json();
       renderTracks(job.tracks || [], sourceUrl, true, jobId);
+      setupRescanPanel(jobId, job.source?.duration || 0, job.tracks || []);
     }
   } catch (e) {}
   loadHistory();
 }
+
+async function pollRescan(jobId, analysisId) {
+  const res = await fetch(`/api/jobs/${jobId}`);
+  if (!res.ok) {
+    rescanBtn.disabled = false;
+    return;
+  }
+  const job = await res.json();
+  const total = job.progress?.total || 0;
+  const current = job.progress?.current || 0;
+  rescanMsg.className = "";
+  rescanMsg.textContent = `${STATUS_LABELS[job.status] || job.status}${total ? ` (${fmtTime(current)}/${fmtTime(total)})` : ""}`;
+
+  if (job.status === "done") {
+    rescanMsg.className = "ok";
+    rescanMsg.textContent = "Tramo reanalizado.";
+    rescanBtn.disabled = false;
+    viewHistory(analysisId);
+    loadHistory();
+  } else if (job.status === "error") {
+    rescanMsg.className = "err";
+    rescanMsg.textContent = job.error || "Error al reanalizar.";
+    rescanBtn.disabled = false;
+  } else {
+    setTimeout(() => pollRescan(jobId, analysisId), 2000);
+  }
+}
+
+rescanBtn.addEventListener("click", async () => {
+  if (!currentAnalysisId) return;
+  const startVal = +rescanStart.value;
+  const endVal = +rescanEnd.value;
+  if (endVal <= startVal) {
+    rescanMsg.className = "err";
+    rescanMsg.textContent = "El tramo final debe ser mayor que el inicial.";
+    return;
+  }
+  rescanBtn.disabled = true;
+  rescanMsg.className = "";
+  rescanMsg.textContent = "Reanalizando…";
+
+  let res;
+  try {
+    res = await fetch(`/api/history/${currentAnalysisId}/rescan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_time: startVal,
+        end_time: endVal,
+        step_seconds: +rescanStep.value || undefined,
+        snippet_seconds: +rescanSnippet.value || undefined,
+      }),
+    });
+  } catch (e) {
+    rescanMsg.className = "err";
+    rescanMsg.textContent = "No se pudo contactar con el servidor.";
+    rescanBtn.disabled = false;
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    rescanMsg.className = "err";
+    rescanMsg.textContent = data.error || "Error al reanalizar.";
+    rescanBtn.disabled = false;
+    return;
+  }
+  pollRescan(data.job_id, currentAnalysisId);
+});
 
 async function poll(jobId, sourceUrl) {
   let res;
@@ -626,6 +931,7 @@ async function viewHistory(id) {
   mainPlayerLoadedFor = sourceUrl;
   showMainPlayer(sourceUrl, 0, false);
   renderTracks(job.tracks || [], sourceUrl, true, id);
+  setupRescanPanel(id, job.source?.duration || 0, job.tracks || []);
   window.scrollTo({ top: statusBox.offsetTop - 20, behavior: "smooth" });
 }
 
@@ -646,13 +952,25 @@ form.addEventListener("submit", async (e) => {
   tbody.innerHTML = "";
   playerContainer.classList.remove("show");
   mainPlayerLoadedFor = null;
+  rescanPanel.classList.remove("show");
+  currentAnalysisId = null;
+
+  const body = {
+    url,
+    step_seconds: +optStep.value || undefined,
+    snippet_seconds: +optSnippet.value || undefined,
+  };
+  if (optRangeEnable.checked) {
+    body.start_time = +optStart.value;
+    body.end_time = +optEnd.value;
+  }
 
   let res;
   try {
     res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(body),
     });
   } catch (err) {
     errorBox.style.display = "block";

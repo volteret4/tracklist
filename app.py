@@ -79,6 +79,30 @@ def _save_analysis(job_id, job):
             )
 
 
+def _merge_tracks(analysis_id, range_start, range_end, new_tracks):
+    # Reanálisis de un tramo: sustituye los temas "pending" que caigan dentro
+    # del tramo (probablemente mal identificados o huecos vacíos) pero deja
+    # intactos los ya aprobados -- aprobar es la forma de "proteger" un
+    # acierto frente a un reanálisis posterior.
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM tracks WHERE analysis_id = ? AND status != 'approved' "
+            "AND timestamp >= ? AND timestamp <= ?",
+            (analysis_id, range_start, range_end),
+        )
+        next_pos = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM tracks WHERE analysis_id = ?", (analysis_id,)
+        ).fetchone()["p"]
+        for i, tr in enumerate(new_tracks):
+            yt = tr.get("youtube") or {}
+            conn.execute(
+                "INSERT INTO tracks (analysis_id, position, timestamp, artist, title, youtube_url, youtube_title, youtube_thumbnail) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (analysis_id, next_pos + i, tr.get("timestamp"), tr.get("artist"), tr.get("title"),
+                 yt.get("url"), yt.get("title"), yt.get("thumbnail")),
+            )
+
+
 def _list_history():
     with _db() as conn:
         rows = conn.execute("""
@@ -96,7 +120,7 @@ def _get_history_detail(analysis_id):
         if not analysis:
             return None
         rows = conn.execute(
-            "SELECT rowid AS id, * FROM tracks WHERE analysis_id = ? ORDER BY position", (analysis_id,)
+            "SELECT rowid AS id, * FROM tracks WHERE analysis_id = ? ORDER BY timestamp", (analysis_id,)
         ).fetchall()
     tracks = []
     for r in rows:
@@ -166,7 +190,7 @@ def _new_job():
     }
 
 
-def _download_audio(url, tmpdir):
+def _download_audio(url, tmpdir, start=None, end=None):
     outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
     ydl_opts = {
         "format": "bestaudio/best",
@@ -179,6 +203,12 @@ def _download_audio(url, tmpdir):
         "noplaylist": True,
         **_ydl_base_opts(),
     }
+    if start is not None and end is not None:
+        # Descarga (recorta con ffmpeg) solo el tramo pedido -- clave para
+        # poder reanalizar un hueco de pocos minutos en un mix de 1h+ sin
+        # tener que volver a bajarlo entero.
+        ydl_opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start, end)])
+        ydl_opts["force_keyframes_at_cuts"] = True
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
     return os.path.join(tmpdir, "audio.mp3"), info
@@ -197,12 +227,12 @@ def _probe_duration(audio_path):
     return float(out.stdout.strip())
 
 
-def _extract_snippet(audio_path, start, tmpdir):
+def _extract_snippet(audio_path, start, length, tmpdir):
     out_path = os.path.join(tmpdir, f"snip_{start}.mp3")
     subprocess.run(
         [
             "ffmpeg", "-y", "-v", "error",
-            "-ss", str(start), "-t", str(SNIPPET_SECONDS),
+            "-ss", str(start), "-t", str(length),
             "-i", audio_path,
             "-ac", "1", "-ar", "44100",
             out_path,
@@ -246,15 +276,28 @@ def _search_youtube(query):
     }
 
 
-def _run_job(job_id, url):
+def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_into=None):
+    step = step or STEP_SECONDS
+    snippet = snippet or SNIPPET_SECONDS
+    ranged = bool(start) or end is not None
     job = JOBS[job_id]
+    if merge_into:
+        job["target_analysis_id"] = merge_into
     tmpdir = tempfile.mkdtemp(prefix="tracklist_")
     try:
         job["status"] = "downloading"
-        audio_path, info = _download_audio(url, tmpdir)
-        duration = info.get("duration") or _probe_duration(audio_path)
-        job["source"] = {"title": info.get("title"), "duration": duration, "url": url}
-        job["progress"] = {"current": 0, "total": duration}
+        try:
+            audio_path, info = _download_audio(url, tmpdir, start if ranged else None, end if ranged else None)
+        except Exception:
+            # yt-dlp/ffmpeg a veces falla de forma transitoria (URL firmada
+            # de YouTube que expira a mitad de descarga, hipo de red) --
+            # un solo reintento resuelve la mayoría de estos casos.
+            audio_path, info = _download_audio(url, tmpdir, start if ranged else None, end if ranged else None)
+        local_duration = _probe_duration(audio_path)
+        full_duration = info.get("duration") or (start + local_duration if ranged else local_duration)
+        offset = start if ranged else 0
+        job["source"] = {"title": info.get("title"), "duration": full_duration, "url": url}
+        job["progress"] = {"current": 0, "total": local_duration}
 
         job["status"] = "analyzing"
         shazam = Shazam()
@@ -262,8 +305,8 @@ def _run_job(job_id, url):
         tracks = []
         t = 0
         try:
-            while t < duration:
-                snippet_path = _extract_snippet(audio_path, t, tmpdir)
+            while t < local_duration:
+                snippet_path = _extract_snippet(audio_path, t, snippet, tmpdir)
                 track = None
                 try:
                     result = loop.run_until_complete(shazam.recognize(snippet_path))
@@ -282,7 +325,7 @@ def _run_job(job_id, url):
                     last = tracks[-1] if tracks else None
                     if not last or (last["artist"], last["title"]) != (artist, title):
                         tracks.append({
-                            "timestamp": t,
+                            "timestamp": offset + t,
                             "artist": artist,
                             "title": title,
                             "youtube": None,
@@ -290,7 +333,7 @@ def _run_job(job_id, url):
                         job["tracks"] = list(tracks)
 
                 job["progress"]["current"] = t
-                t += STEP_SECONDS
+                t += step
         finally:
             loop.close()
 
@@ -300,7 +343,11 @@ def _run_job(job_id, url):
             job["tracks"] = list(tracks)
 
         job["status"] = "done"
-        _save_analysis(job_id, job)
+        if merge_into:
+            range_end = end if end is not None else offset + local_duration
+            _merge_tracks(merge_into, offset, range_end, tracks)
+        else:
+            _save_analysis(job_id, job)
     except Exception as exc:
         job["status"] = "error"
         job["error"] = str(exc)
@@ -313,6 +360,13 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+def _clamp_int(value, lo, hi, default):
+    try:
+        return max(lo, min(hi, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 @app.route("/api/jobs", methods=["POST"])
 def create_job():
     data = request.get_json(force=True, silent=True) or {}
@@ -320,10 +374,36 @@ def create_job():
     if not url:
         return jsonify({"error": "Falta la url"}), 400
 
+    step = _clamp_int(data.get("step_seconds"), 5, 300, STEP_SECONDS)
+    snippet = _clamp_int(data.get("snippet_seconds"), 4, 60, SNIPPET_SECONDS)
+    start = max(0, float(data.get("start_time") or 0))
+    end = data.get("end_time")
+    end = float(end) if end not in (None, "") else None
+    if end is not None and end <= start:
+        return jsonify({"error": "Rango de tiempo inválido"}), 400
+
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = _new_job()
-    threading.Thread(target=_run_job, args=(job_id, url), daemon=True).start()
+    threading.Thread(
+        target=_run_job, args=(job_id, url),
+        kwargs={"step": step, "snippet": snippet, "start": start, "end": end},
+        daemon=True,
+    ).start()
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/info")
+def info_lookup():
+    url = (request.args.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Falta la url"}), 400
+    ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, **_ydl_base_opts()}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"title": info.get("title"), "duration": info.get("duration")})
 
 
 @app.route("/api/jobs/<job_id>")
@@ -352,6 +432,35 @@ def history_delete(analysis_id):
     if not _delete_history(analysis_id):
         return jsonify({"error": "no encontrado"}), 404
     return jsonify({"ok": True})
+
+
+@app.route("/api/history/<analysis_id>/rescan", methods=["POST"])
+def history_rescan(analysis_id):
+    with _db() as conn:
+        analysis = conn.execute("SELECT * FROM analyses WHERE id = ?", (analysis_id,)).fetchone()
+    if not analysis:
+        return jsonify({"error": "no encontrado"}), 404
+
+    data = request.get_json(force=True, silent=True) or {}
+    duration = analysis["duration"] or 0
+    start = max(0, float(data.get("start_time") or 0))
+    end = float(data.get("end_time")) if data.get("end_time") not in (None, "") else duration
+    if duration:
+        end = min(end, duration)
+    if end <= start:
+        return jsonify({"error": "Rango de tiempo inválido"}), 400
+
+    step = _clamp_int(data.get("step_seconds"), 5, 300, STEP_SECONDS)
+    snippet = _clamp_int(data.get("snippet_seconds"), 4, 60, SNIPPET_SECONDS)
+
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = _new_job()
+    threading.Thread(
+        target=_run_job, args=(job_id, analysis["url"]),
+        kwargs={"step": step, "snippet": snippet, "start": start, "end": end, "merge_into": analysis_id},
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id, "target_analysis_id": analysis_id})
 
 
 @app.route("/api/history/<analysis_id>/tracks/<int:track_id>", methods=["PATCH"])
