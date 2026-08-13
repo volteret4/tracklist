@@ -12,6 +12,8 @@ import yt_dlp
 from flask import Flask, jsonify, request, send_from_directory
 from shazamio import Shazam
 
+COOKIES_MAX_BYTES = 256 * 1024
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 STEP_SECONDS = int(os.environ.get("TRACKLIST_STEP_SECONDS", "45"))
@@ -52,6 +54,10 @@ def _init_db():
                 youtube_thumbnail TEXT
             )
         """)
+        try:
+            conn.execute("ALTER TABLE tracks ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+        except sqlite3.OperationalError:
+            pass  # ya existe (migración ya aplicada)
 
 
 def _save_analysis(job_id, job):
@@ -90,14 +96,21 @@ def _get_history_detail(analysis_id):
         if not analysis:
             return None
         rows = conn.execute(
-            "SELECT * FROM tracks WHERE analysis_id = ? ORDER BY position", (analysis_id,)
+            "SELECT rowid AS id, * FROM tracks WHERE analysis_id = ? ORDER BY position", (analysis_id,)
         ).fetchall()
     tracks = []
     for r in rows:
         youtube = None
         if r["youtube_url"]:
             youtube = {"url": r["youtube_url"], "title": r["youtube_title"], "thumbnail": r["youtube_thumbnail"]}
-        tracks.append({"timestamp": r["timestamp"], "artist": r["artist"], "title": r["title"], "youtube": youtube})
+        tracks.append({
+            "id": r["id"],
+            "timestamp": r["timestamp"],
+            "artist": r["artist"],
+            "title": r["title"],
+            "youtube": youtube,
+            "status": r["status"],
+        })
     return {
         "status": "done",
         "source": {"title": analysis["title"], "duration": analysis["duration"], "url": analysis["url"]},
@@ -111,6 +124,23 @@ def _delete_history(analysis_id):
     with _db() as conn:
         cur = conn.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
         conn.execute("DELETE FROM tracks WHERE analysis_id = ?", (analysis_id,))
+        return cur.rowcount > 0
+
+
+def _set_track_status(analysis_id, track_id, status):
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE tracks SET status = ? WHERE rowid = ? AND analysis_id = ?",
+            (status, track_id, analysis_id),
+        )
+        return cur.rowcount > 0
+
+
+def _delete_track(analysis_id, track_id):
+    with _db() as conn:
+        cur = conn.execute(
+            "DELETE FROM tracks WHERE rowid = ? AND analysis_id = ?", (track_id, analysis_id)
+        )
         return cur.rowcount > 0
 
 
@@ -321,6 +351,67 @@ def history_detail(analysis_id):
 def history_delete(analysis_id):
     if not _delete_history(analysis_id):
         return jsonify({"error": "no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/history/<analysis_id>/tracks/<int:track_id>", methods=["PATCH"])
+def track_update(analysis_id, track_id):
+    data = request.get_json(force=True, silent=True) or {}
+    status = data.get("status")
+    if status not in ("pending", "approved"):
+        return jsonify({"error": "status inválido"}), 400
+    if not _set_track_status(analysis_id, track_id, status):
+        return jsonify({"error": "no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/history/<analysis_id>/tracks/<int:track_id>", methods=["DELETE"])
+def track_delete(analysis_id, track_id):
+    if not _delete_track(analysis_id, track_id):
+        return jsonify({"error": "no encontrado"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cookies", methods=["GET"])
+def cookies_status():
+    exists = os.path.isfile(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
+    return jsonify({
+        "present": exists,
+        "updated_at": (
+            datetime.datetime.utcfromtimestamp(os.path.getmtime(COOKIES_FILE)).isoformat()
+            if exists else None
+        ),
+    })
+
+
+@app.route("/api/cookies", methods=["POST"])
+def cookies_upload():
+    content = None
+    if "file" in request.files:
+        content = request.files["file"].read()
+    elif request.data:
+        content = request.data
+
+    if not content:
+        return jsonify({"error": "No se ha recibido ningún archivo"}), 400
+    if len(content) > COOKIES_MAX_BYTES:
+        return jsonify({"error": "Archivo demasiado grande"}), 400
+
+    text = content.decode("utf-8", errors="replace")
+    # Validación mínima: cookies.txt en formato Netscape tiene una cabecera
+    # o líneas tabuladas de 7 campos (domain, flag, path, secure, expiry,
+    # name, value) -- si no hay ni una línea así, probablemente no es el
+    # archivo correcto.
+    has_netscape_line = any(
+        len(line.split("\t")) == 7
+        for line in text.splitlines()
+        if line and not line.startswith("#")
+    )
+    if not has_netscape_line and "Netscape HTTP Cookie File" not in text:
+        return jsonify({"error": "No parece un cookies.txt en formato Netscape"}), 400
+
+    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+        f.write(text)
     return jsonify({"ok": True})
 
 
