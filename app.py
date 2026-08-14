@@ -15,6 +15,7 @@ from shazamio import Shazam
 COOKIES_MAX_BYTES = 256 * 1024
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 STEP_SECONDS = int(os.environ.get("TRACKLIST_STEP_SECONDS", "45"))
 SNIPPET_SECONDS = int(os.environ.get("TRACKLIST_SNIPPET_SECONDS", "12"))
@@ -357,7 +358,9 @@ def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_i
 
 @app.route("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    resp = send_from_directory(app.static_folder, "index.html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _clamp_int(value, lo, hi, default):
