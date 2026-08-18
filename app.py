@@ -194,7 +194,13 @@ def _new_job():
 def _download_audio(url, tmpdir, start=None, end=None):
     outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
     ydl_opts = {
-        "format": "bestaudio/best",
+        # Solo necesitamos el audio (para Shazam y para recortar snippets) --
+        # si no hay pista de solo-audio, cae a la peor calidad combinada en
+        # vez de "best": un vídeo de mala resolución pesa una fracción de un
+        # "best" en vídeos donde YouTube no ofrece bestaudio (frecuente en
+        # streams/VODs de directos), y el audio se descarta igual tras
+        # extraerlo con FFmpegExtractAudio.
+        "format": "bestaudio/worst",
         "outtmpl": outtmpl,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}
