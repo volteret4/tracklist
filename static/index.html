@@ -249,24 +249,24 @@
     font-weight: 500;
   }
   #history-empty { color: var(--muted); font-size: .88rem; }
-  #cookies-box {
+  #ytauth-box {
     display: flex;
     align-items: center;
     gap: .75rem;
     flex-wrap: wrap;
     font-size: .88rem;
   }
-  #cookies-status { color: var(--muted); }
-  #cookies-status.ok { color: var(--ok); }
-  #cookies-status.warn { color: var(--err); }
-  #cookies-file {
+  #ytauth-status { color: var(--muted); }
+  #ytauth-status.ok { color: var(--ok); }
+  #ytauth-status.warn { color: var(--err); }
+  #ytauth-file {
     color: var(--muted);
     font-size: .85rem;
     max-width: 220px;
   }
-  #cookies-msg { font-size: .82rem; margin-top: .5rem; display: none; }
-  #cookies-msg.ok { color: var(--ok); display: block; }
-  #cookies-msg.err { color: var(--err); display: block; }
+  #ytauth-msg { font-size: .82rem; margin-top: .5rem; display: none; }
+  #ytauth-msg.ok { color: var(--ok); display: block; }
+  #ytauth-msg.err { color: var(--err); display: block; }
   details.adv {
     margin-top: .75rem;
     border: 1px solid var(--border);
@@ -418,12 +418,12 @@
 
   <h2>Cookies de YouTube</h2>
   <p class="sub" style="margin-bottom:.75rem">Cuando caduquen las actuales y vuelva el error "Sign in to confirm you're not a bot", sube aquí un <code>cookies.txt</code> nuevo (formato Netscape) sin necesidad de entrar por SSH.</p>
-  <div id="cookies-box">
-    <span id="cookies-status">comprobando…</span>
-    <input type="file" id="cookies-file" accept=".txt">
-    <button type="button" id="cookies-upload-btn">Subir</button>
+  <div id="ytauth-box">
+    <span id="ytauth-status">comprobando…</span>
+    <input type="file" id="ytauth-file" accept=".txt">
+    <button type="button" id="ytauth-upload-btn">Subir</button>
   </div>
-  <div id="cookies-msg"></div>
+  <div id="ytauth-msg"></div>
 </main>
 
 <script>
@@ -442,10 +442,10 @@ const historyList = document.getElementById("history-list");
 const historyEmpty = document.getElementById("history-empty");
 const playerContainer = document.getElementById("player-container");
 const ytPlayerDiv = document.getElementById("yt-player");
-const cookiesStatus = document.getElementById("cookies-status");
-const cookiesFileInput = document.getElementById("cookies-file");
-const cookiesUploadBtn = document.getElementById("cookies-upload-btn");
-const cookiesMsg = document.getElementById("cookies-msg");
+const cookiesStatus = document.getElementById("ytauth-status");
+const cookiesFileInput = document.getElementById("ytauth-file");
+const cookiesUploadBtn = document.getElementById("ytauth-upload-btn");
+const cookiesMsg = document.getElementById("ytauth-msg");
 
 const optStep = document.getElementById("opt-step");
 const optSnippet = document.getElementById("opt-snippet");
