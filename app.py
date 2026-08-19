@@ -191,7 +191,7 @@ def _new_job():
     }
 
 
-def _download_audio(url, tmpdir, start=None, end=None):
+def _download_audio(url, tmpdir):
     outtmpl = os.path.join(tmpdir, "audio.%(ext)s")
     ydl_opts = {
         # Solo necesitamos el audio (para Shazam y para recortar snippets) --
@@ -200,6 +200,17 @@ def _download_audio(url, tmpdir, start=None, end=None):
         # "best" en vídeos donde YouTube no ofrece bestaudio (frecuente en
         # streams/VODs de directos), y el audio se descarta igual tras
         # extraerlo con FFmpegExtractAudio.
+        #
+        # Antes se pedía aquí un "download_ranges" (+ force_keyframes_at_cuts)
+        # para bajar solo el tramo pedido en un reanálisis parcial, pero eso
+        # obliga a yt-dlp a invocar ffmpeg como downloader contra la URL
+        # firmada de googlevideo.com directamente -- y esa URL suele venir
+        # atada a un cliente concreto (ANDROID_VR, etc.) cuyas cabeceras no
+        # coinciden con las que ffmpeg manda, y YouTube responde 403
+        # Forbidden. Bajar siempre el audio completo (como aquí) usa el
+        # downloader nativo de yt-dlp, que sí resuelve las cabeceras/cliente
+        # correctos -- el tramo se sigue recortando después, localmente, con
+        # _extract_snippet.
         "format": "bestaudio/worst",
         "outtmpl": outtmpl,
         "postprocessors": [
@@ -210,12 +221,6 @@ def _download_audio(url, tmpdir, start=None, end=None):
         "noplaylist": True,
         **_ydl_base_opts(),
     }
-    if start is not None and end is not None:
-        # Descarga (recorta con ffmpeg) solo el tramo pedido -- clave para
-        # poder reanalizar un hueco de pocos minutos en un mix de 1h+ sin
-        # tener que volver a bajarlo entero.
-        ydl_opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start, end)])
-        ydl_opts["force_keyframes_at_cuts"] = True
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
     return os.path.join(tmpdir, "audio.mp3"), info
@@ -286,7 +291,6 @@ def _search_youtube(query):
 def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_into=None):
     step = step or STEP_SECONDS
     snippet = snippet or SNIPPET_SECONDS
-    ranged = bool(start) or end is not None
     job = JOBS[job_id]
     if merge_into:
         job["target_analysis_id"] = merge_into
@@ -294,25 +298,25 @@ def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_i
     try:
         job["status"] = "downloading"
         try:
-            audio_path, info = _download_audio(url, tmpdir, start if ranged else None, end if ranged else None)
+            audio_path, info = _download_audio(url, tmpdir)
         except Exception:
             # yt-dlp/ffmpeg a veces falla de forma transitoria (URL firmada
             # de YouTube que expira a mitad de descarga, hipo de red) --
             # un solo reintento resuelve la mayoría de estos casos.
-            audio_path, info = _download_audio(url, tmpdir, start if ranged else None, end if ranged else None)
+            audio_path, info = _download_audio(url, tmpdir)
         local_duration = _probe_duration(audio_path)
-        full_duration = info.get("duration") or (start + local_duration if ranged else local_duration)
-        offset = start if ranged else 0
+        full_duration = info.get("duration") or local_duration
+        range_end = min(end, full_duration) if end is not None else full_duration
         job["source"] = {"title": info.get("title"), "duration": full_duration, "url": url}
-        job["progress"] = {"current": 0, "total": local_duration}
+        job["progress"] = {"current": start, "total": range_end}
 
         job["status"] = "analyzing"
         shazam = Shazam()
         loop = asyncio.new_event_loop()
         tracks = []
-        t = 0
+        t = start
         try:
-            while t < local_duration:
+            while t < range_end:
                 snippet_path = _extract_snippet(audio_path, t, snippet, tmpdir)
                 track = None
                 try:
@@ -332,7 +336,7 @@ def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_i
                     last = tracks[-1] if tracks else None
                     if not last or (last["artist"], last["title"]) != (artist, title):
                         tracks.append({
-                            "timestamp": offset + t,
+                            "timestamp": t,
                             "artist": artist,
                             "title": title,
                             "youtube": None,
@@ -351,8 +355,7 @@ def _run_job(job_id, url, *, step=None, snippet=None, start=0, end=None, merge_i
 
         job["status"] = "done"
         if merge_into:
-            range_end = end if end is not None else offset + local_duration
-            _merge_tracks(merge_into, offset, range_end, tracks)
+            _merge_tracks(merge_into, start, range_end, tracks)
         else:
             _save_analysis(job_id, job)
     except Exception as exc:
