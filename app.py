@@ -175,7 +175,17 @@ def _ydl_base_opts():
     # que interpreta el challenge no viene empaquetado -- sin esto, la
     # mayoría de vídeos solo exponen formatos de storyboard y falla con
     # "Requested format is not available".
-    opts = {"remote_components": ["ejs:github"]}
+    # player_client=android,mweb: por defecto yt-dlp también resuelve
+    # formatos de clientes como android_vr/web_safari/tv, cuyas URLs
+    # firmadas dan 403 al pedirlas de verdad (aunque la extracción de
+    # metadatos funcione) por restricciones de PO Token/DRM que cambian según
+    # el vídeo y el momento -- ver el hilo de depuración del 2026-08-19.
+    # Restringir a estos dos clientes evita que "bestaudio/worst" pueda
+    # elegir uno de esos formatos rotos.
+    opts = {
+        "remote_components": ["ejs:github"],
+        "extractor_args": {"youtube": {"player_client": ["android", "mweb"]}},
+    }
     if os.path.isfile(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0:
         opts["cookiefile"] = COOKIES_FILE
     return opts
